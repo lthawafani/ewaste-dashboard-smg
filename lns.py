@@ -362,6 +362,10 @@ def run_lns(weights: dict,
         routes_current, dist_matrix, k_star
     )
 
+    # Simpan initial solution untuk perbandingan
+    tc_initial   = tc_current
+    dist_initial = total_dist
+
     routes_best = copy.deepcopy(routes_current)
     tc_best     = tc_current
 
@@ -430,4 +434,88 @@ def run_lns(weights: dict,
         'w_total'        : round(w_total, 1),
         'iterations'     : iteration,
         'dispatch'       : dispatch,
+    }
+
+# NOTE: patched to expose initial solution for comparison
+_original_run_lns = run_lns
+
+def run_lns(weights, dist_matrix_df, n_stag=N_STAG, rho=RHO, p_worst=P_WORST, seed=42):
+    import random, copy, numpy as np
+
+    random.seed(seed)
+    np.random.seed(seed)
+
+    dist_matrix = dist_matrix_df.values.astype(float)
+    eligible, skipped, w_total, k_star, dispatch = preprocess(weights)
+
+    if not dispatch:
+        return {
+            'dispatch' : False,
+            'w_total'  : w_total,
+            'skipped'  : skipped,
+            'eligible' : eligible,
+            'k_star'   : 0,
+            'message'  : f"Total eligible weight ({w_total:.0f} kg) "
+                         f"< minimum dispatch ({Q_MIN} kg). "
+                         f"Collection deferred."
+        }
+
+    # Phase 1: Initial solution
+    routes_current = greedy_nearest_neighbor(eligible, weights, dist_matrix, k_star)
+    tc_initial, fc, vc, dist_initial = total_cost(routes_current, dist_matrix, k_star)
+
+    routes_best = copy.deepcopy(routes_current)
+    tc_best     = tc_initial
+
+    # Phase 2: LNS
+    no_improve = 0
+    iteration  = 0
+    n_remove   = max(1, int(len(eligible) * rho))
+
+    while no_improve < n_stag:
+        iteration += 1
+        if random.random() < p_worst:
+            routes_new, removed = worst_removal(routes_current, weights, dist_matrix, n_remove)
+        else:
+            routes_new, removed = random_removal(routes_current, n_remove)
+
+        routes_new = greedy_best_insertion(routes_new, removed, weights, dist_matrix)
+        tc_new, _, _, _ = total_cost(routes_new, dist_matrix, k_star)
+
+        if tc_new < tc_best:
+            routes_best = copy.deepcopy(routes_new)
+            tc_best     = tc_new
+            no_improve  = 0
+        else:
+            no_improve += 1
+
+        routes_current = copy.deepcopy(routes_new)
+
+    # Phase 3: Output
+    tc_final, fc_final, vc_final, dist_final = total_cost(routes_best, dist_matrix, k_star)
+
+    dist_per_route = [round(route_distance(r, dist_matrix), 3) for r in routes_best]
+    load_per_route = [round(route_load(r, weights), 1) for r in routes_best]
+
+    improvement_dist = round((dist_initial - dist_final) / dist_initial * 100, 2) if dist_initial > 0 else 0
+    improvement_tc   = round((tc_initial   - tc_final)   / tc_initial   * 100, 2) if tc_initial  > 0 else 0
+
+    return {
+        'dispatch'         : True,
+        'routes'           : routes_best,
+        'tc'               : round(tc_final),
+        'fc'               : round(fc_final),
+        'vc'               : round(vc_final),
+        'total_dist'       : round(dist_final, 3),
+        'dist_per_route'   : dist_per_route,
+        'load_per_route'   : load_per_route,
+        'k_star'           : k_star,
+        'eligible'         : eligible,
+        'skipped'          : skipped,
+        'w_total'          : round(w_total, 1),
+        'iterations'       : iteration,
+        'tc_initial'       : round(tc_initial),
+        'dist_initial'     : round(dist_initial, 3),
+        'improvement_dist' : improvement_dist,
+        'improvement_tc'   : improvement_tc,
     }
