@@ -138,7 +138,7 @@ st.divider()
 # ============================================================
 # SECTION 2 — RUN OPTIMIZATION
 # ============================================================
-st.header("🚀 Run Optimization")
+st.header("Run Optimization")
 
 run_btn = st.button(
     "▶ Run LNS Optimization",
